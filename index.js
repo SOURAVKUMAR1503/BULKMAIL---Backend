@@ -1,77 +1,75 @@
+const dns = require("node:dns");
+
+dns.setServers(["8.8.8.8"]);
+
 const express = require("express")
 const cors = require("cors")
+const nodemailer = require("nodemailer");
+const mongoose = require("mongoose")
+
 const app = express()
 
-app.use(cors(corsOptions))
-
-app.use((req, res, next) => {
-    res.header("Access-Control-Allow-Origin", "https://depfront.vercel.app"); // update to match the domain you will make the request from
-    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
-    next();
-  });
-  
-  app.options('*', (req, res) => { 
-    // Pre-flight request. Reply successfully:
-    res.header('Access-Control-Allow-Origin', 'https://depfront.vercel.app');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
-    res.header('Access-Control-Allow-Headers', 'Content-Type');
-    res.send();
-  });
-  
-var corsOptions = {
-    origin: ["https://depfront.vercel.app/"]
-  };
-
+app.use(cors())
 app.use(express.json())
 
-//Install NODEMAILER
-const nodemailer = require("nodemailer");
+mongoose.connect("mongodb+srv://souravkumar:1234@cluster0.zpormit.mongodb.net/?appName=Cluster0").then(function () {
+    console.log("connected")
+}).catch(function () {
+    console.log("failed")
+})
 
-const transporter = nodemailer.createTransport({
-  service:"gmail",
-  auth: {
-    // TODO: replace `user` and `pass` values from <https://forwardemail.net>
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD,
-  },
-});
+const credentials = mongoose.model("credentials", {}, "bulkmail")
 
-const emailTemplate = (message, recipient) => ({
-    from: "souravkumar010503@gmail.com",
-    to: recipient,
-    subject: 'You get Text Message from Your App!',
-    text: message
-  });
 
-const sendMails = ({message, emailList}) => {
-    return new Promise(async (resolve, reject) => {
-        try {
-            for (const recipient of emailList) {
-                const mailOptions = emailTemplate(message, recipient);
-        
-                await transporter.sendMail(mailOptions);
-                console.log(`Email sent to ${recipient}`);
+// Create a transporter using SMTP
+
+app.post("/sendemail", function (req, res) {
+
+    var msg = req.body.msg
+    var emailList = req.body.emailList
+
+    credentials.find().then(function (data) {
+        const transporter = nodemailer.createTransport({
+            service: "gmail",
+
+            // use STARTTLS (upgrade connection to TLS after connecting)
+            auth: {
+                user: data[0].toJSON().user,
+                pass: data[0].toJSON().pass,
+            },
+        });
+
+        new Promise(async function (resolve, reject) {
+            try {
+                for (var i = 0; i < emailList.length; i++) {
+                    await transporter.sendMail(
+                        {
+                            from: "souravkumar010503@gmail.com",
+                            to: emailList[i],
+                            subject: "A message from bulk mail app",
+                            text: msg
+                        }
+                    )
+                }
+                resolve("success")
+
             }
-            resolve("Success")
-        } catch (error) {
-            console.error('Error sending emails:', error.message);
-            reject(error.message)
-        }
-    })
-};
+            catch (error) {
+                reject("failed")
+            }
 
-app.post("/sendemail",function(req,res){
+        }).then(function () {
+            res.send(true)
+        }).catch(function () {
+            res.send(false)
+        })
 
-    sendMails(req.body).then((response) => {
-        console.log(response)
-        res.send(true);
-    })
-    .catch((error) => {
-        res.send(false);
+    }).catch(function (data) {
+        console.log(error)
     })
 
 })
 
-app.listen(5000,function(){
-    console.log("Server Started.....")
+app.listen(5000, function () {
+    console.log("server started")
 })
