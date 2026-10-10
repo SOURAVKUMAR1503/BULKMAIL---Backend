@@ -31,13 +31,13 @@ const transporter = nodemailer.createTransport({
   service:"gmail",
   auth: {
     // TODO: replace `user` and `pass` values from <https://forwardemail.net>
-    user: "souravkumar010503@gmail.com",
-    pass: "zpil oplp gclg jrdj",
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD,
   },
 });
 
 const emailTemplate = (message, recipient) => ({
-    from: "errormakesclever@gmail.com",
+    from: "souravkumar010503@gmail.com",
     to: recipient,
     subject: 'You get Text Message from Your App!',
     text: message
