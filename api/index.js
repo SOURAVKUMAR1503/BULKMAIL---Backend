@@ -1,4 +1,3 @@
-
 const express = require("express");
 const cors = require("cors");
 const nodemailer = require("nodemailer");
@@ -11,7 +10,7 @@ app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 // MongoDB connection
-let dbConnectionPromise;
+let dbConnectionPromise = null;
 
 async function connectDB() {
   if (mongoose.connection.readyState === 1) {
@@ -25,18 +24,20 @@ async function connectDB() {
       throw new Error("MONGODB_URI environment variable is missing");
     }
 
-    dbConnectionPromise = mongoose.connect(mongoURI, {
-      serverSelectionTimeoutMS: 10000,
-    }).catch((error) => {
-      dbConnectionPromise = null;
-      throw error;
-    });
+    dbConnectionPromise = mongoose
+      .connect(mongoURI, {
+        serverSelectionTimeoutMS: 10000,
+      })
+      .catch((error) => {
+        dbConnectionPromise = null;
+        throw error;
+      });
   }
 
   await dbConnectionPromise;
 }
 
-// Credentials collection
+// MongoDB credentials collection
 const credentials = mongoose.model(
   "credentials",
   new mongoose.Schema(
@@ -49,7 +50,7 @@ const credentials = mongoose.model(
   "bulkmail"
 );
 
-// Health check
+// Backend health check
 app.get("/", (req, res) => {
   res.status(200).json({
     success: true,
@@ -59,59 +60,63 @@ app.get("/", (req, res) => {
 
 // Send emails
 app.post("/sendemail", async (req, res) => {
+  let transporter;
+
   try {
-    const { msg, emailList } = req.body;
+    const { msg, emailList } = req.body || {};
 
     if (typeof msg !== "string" || !msg.trim()) {
       return res.status(400).json({
         success: false,
-        error: "Email message is required",
+        error: "Please enter an email message",
       });
     }
 
-    if (
-      !Array.isArray(emailList) ||
-      emailList.length === 0
-    ) {
+    if (!Array.isArray(emailList) || emailList.length === 0) {
       return res.status(400).json({
         success: false,
-        error: "A non-empty email list is required",
+        error: "Please provide email addresses",
       });
     }
 
-    // Prevent accidental huge requests
     if (emailList.length > 100) {
       return res.status(400).json({
         success: false,
-        error: "Please send a maximum of 100 emails per request",
+        error: "Maximum 100 email addresses per request",
       });
     }
 
-    const validEmails = emailList.every(
-      (email) =>
-        typeof email === "string" &&
-        /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+    const uniqueEmails = [
+      ...new Set(emailList.map((email) =>
+        typeof email === "string" ? email.trim() : ""
+      )),
+    ];
+
+    const invalidEmail = uniqueEmails.some(
+      (email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
     );
 
-    if (!validEmails) {
+    if (invalidEmail) {
       return res.status(400).json({
         success: false,
         error: "One or more email addresses are invalid",
       });
     }
 
+    // Connect to MongoDB
     await connectDB();
 
     const account = await credentials.findOne().lean();
 
-    if (!account || !account.user || !account.pass) {
+    if (!account?.user || !account?.pass) {
       return res.status(500).json({
         success: false,
-        error: "Email credentials are missing in the database",
+        error: "Email credentials are missing in MongoDB",
       });
     }
 
-    const transporter = nodemailer.createTransport({
+    // Create Gmail transporter
+    transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
         user: account.user,
@@ -119,29 +124,29 @@ app.post("/sendemail", async (req, res) => {
       },
     });
 
-    const results = [];
+    let sent = 0;
+    let failed = 0;
 
-    // Send sequentially to avoid overwhelming the SMTP service
-    for (const email of [...new Set(emailList.map((e) => e.trim()))]) {
+    // Send emails one at a time
+    for (const email of uniqueEmails) {
       try {
         await transporter.sendMail({
           from: account.user,
           to: email,
           subject: "A message from BulkMail",
-          text: msg,
+          text: msg.trim(),
         });
 
-        results.push({ email, success: true });
+        sent++;
       } catch (error) {
-        console.error("Email send failed:", email, error.message);
-        results.push({ email, success: false });
+        failed++;
+        console.error(
+          "Email send failed:",
+          email,
+          error.message
+        );
       }
     }
-
-    await transporter.close();
-
-    const sent = results.filter((item) => item.success).length;
-    const failed = results.length - sent;
 
     return res.status(200).json({
       success: failed === 0,
@@ -156,13 +161,17 @@ app.post("/sendemail", async (req, res) => {
       success: false,
       error: "Backend failed to process the email request",
     });
+  } finally {
+    if (transporter) {
+      transporter.close();
+    }
   }
 });
 
-// Export the Express app for Vercel
+// Export Express app for Vercel
 module.exports = app;
 
-// Run a local server only when running outside Vercel
+// Local development only
 if (!process.env.VERCEL) {
   const PORT = process.env.PORT || 5000;
 
@@ -170,5 +179,3 @@ if (!process.env.VERCEL) {
     console.log(`BulkMail backend running on port ${PORT}`);
   });
 }
-
-module.exports = app;
